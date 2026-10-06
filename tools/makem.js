@@ -37,8 +37,13 @@ var BUILD_DEBUG_FILE = 'artoolkit.debug.js';
 var BUILD_WASM_FILE = 'artoolkit_wasm.js';
 var BUILD_MIN_FILE = 'artoolkit.min.js';
 
+// The final link uses em++, which compiles every input as C++, so only the C++ binding
+// goes here; the C tracking helpers are built with the ARToolKit library (see below)
 var MAIN_SOURCES = [
 	'ARToolKitJS.cpp',
+];
+
+var TRACKING_SOURCES = [
 	'trackingMod.c',
 	'trackingMod2d.c',
 ];
@@ -52,6 +57,21 @@ if (!fs.existsSync(path.resolve(ARTOOLKIT5_ROOT, 'include/AR/config.h'))) {
 	console.log("Done!");
 }
 
+// The KPM (NFT) framework/error.h defines isnan/isinf as macros, which break libc++'s
+// <complex> (pulled in by Eigen) with current compilers. They are only used in that
+// header, so swap them for the std:: functions before compiling.
+var ERROR_H = path.resolve(ARTOOLKIT5_ROOT, 'lib/SRC/KPM/FreakMatcher/framework/error.h');
+var errorH = fs.readFileSync(ERROR_H, 'utf8');
+if (/#define isnan\(x\)/.test(errorH)) {
+	console.log("Patching KPM framework/error.h (isnan/isinf macros)");
+	errorH = errorH
+		.replace(/#define isnan\(x\)[^\r\n]*\r?\n/, '#include <cmath>\n')
+		.replace(/#define isinf\(x\)[^\r\n]*\r?\n/, '')
+		.replace('ASSERT(!isnan(x)', 'ASSERT(!std::isnan(x)')
+		.replace('ASSERT(!isinf(x)', 'ASSERT(!std::isinf(x)');
+	fs.writeFileSync(ERROR_H, errorH);
+}
+
 MAIN_SOURCES = MAIN_SOURCES.map(function(src) {
   return path.resolve(SOURCE_PATH, src);
 }).join(' ');
@@ -60,42 +80,36 @@ let srcTest = path.resolve(__dirname, ARTOOLKIT5_ROOT + '/lib/SRC/');
 
 let arSources, ar_sources;
 
-if (platform === 'win32') {
-	var glob = require("glob");
-function match(pattern) {
-    var r = glob.sync('emscripten/artoolkit5/lib/SRC/' + pattern);
-    return r;
-}
-function matchAll(patterns, prefix="") {
-    let r = [];
-    for(let pattern of patterns) {
-        r.push(...(match(prefix + pattern)));
-    }
-    return r;
+// Expand "dir/*.c" here instead of relying on the shell (cmd.exe does not expand
+// wildcards, and the old Windows path needed the undeclared "glob" package)
+function expandSources(patterns) {
+	let r = [];
+	for (let pattern of patterns) {
+		let full = path.resolve(srcTest, pattern);
+		let base = path.basename(full);
+		if (base.indexOf('*') === -1) {
+			r.push(full);
+			continue;
+		}
+		let dir = path.dirname(full);
+		let ext = base.slice(base.indexOf('*') + 1);
+		fs.readdirSync(dir)
+			.filter(function(f) { return f.endsWith(ext); })
+			.sort()
+			.forEach(function(f) { r.push(path.join(dir, f)); });
+	}
+	return r;
 }
 
-	ar_sources = matchAll([
-    'AR/arLabelingSub/*.c',
-    'AR/*.c',
-    'ARICP/*.c',
-    'ARMulti/*.c',
-    'Video/video.c',
-    'ARUtil/log.c',
-    'ARUtil/file_utils.c',
+ar_sources = expandSources([
+	'AR/arLabelingSub/*.c',
+	'AR/*.c',
+	'ARICP/*.c',
+	'ARMulti/*.c',
+	'Video/video.c',
+	'ARUtil/log.c',
+	'ARUtil/file_utils.c',
 ]);
-} else {
-	ar_sources = [
-	  'AR/arLabelingSub/*.c',
-	  'AR/*.c',
-	  'ARICP/*.c',
-	  'ARMulti/*.c',
-	  'Video/video.c',
-	  'ARUtil/log.c',
-	  'ARUtil/file_utils.c',
-	].map(function(src) {
-		return path.resolve(__dirname, ARTOOLKIT5_ROOT + '/lib/SRC/', src);
-	});
-}
 
 var ar2_sources = [
     'handle.c',
@@ -148,30 +162,47 @@ if (HAVE_NFT) {
   .concat(kpm_sources);
 }
 
-var DEFINES = ' ';
+ar_sources = ar_sources.concat(TRACKING_SOURCES.map(function(src) {
+	return path.resolve(SOURCE_PATH, src);
+}));
+
+// ARToolKit's config.h checks for EMSCRIPTEN, which old Emscripten defined; current
+// versions only define __EMSCRIPTEN__
+var DEFINES = ' -D EMSCRIPTEN ';
+// The KPM (NFT) C++ sources use pre-C++17 throw() specifications, an error by default now
+DEFINES += ' -Wno-dynamic-exception-spec ';
+// ...and std::auto_ptr / std::binder1st (also in the bundled Eigen), removed in C++17;
+// libc++ can still provide the removed features for old code
+DEFINES += ' -D _LIBCPP_ENABLE_CXX17_REMOVED_AUTO_PTR -D _LIBCPP_ENABLE_CXX17_REMOVED_BINDERS -Wno-deprecated-declarations ';
 if (HAVE_NFT) DEFINES += ' -D HAVE_NFT ';
 
+// Flags for current Emscripten (3.x/4.x, LLVM backend). The old fastcomp-only flags
+// (TOTAL_MEMORY, --memory-init-file, BINARYEN_TRAP_MODE, DEMANGLE_SUPPORT) no longer exist.
 var FLAGS = '' + OPTIMIZE_FLAGS;
-FLAGS += ' -Wno-warn-absolute-paths ';
-FLAGS += ' -s TOTAL_MEMORY=' + MEM + ' ';
+FLAGS += ' -s INITIAL_MEMORY=' + MEM + ' ';
 FLAGS += ' -s USE_ZLIB=1';
-FLAGS += ' -s USE_LIBJPEG';
-FLAGS += ' --memory-init-file 0 '; // for memless file
+FLAGS += ' -s USE_LIBJPEG=1';
 
-var WASM_FLAGS = ' -s BINARYEN_TRAP_MODE=clamp'
+// Compile-only flags for the intermediate library (no linker settings)
+var LIB_FLAGS = '' + OPTIMIZE_FLAGS + ' -s USE_ZLIB=1 -s USE_LIBJPEG=1 ';
+
+// artoolkit.api.js writes camera/marker files with FS.writeFile and passes video frames
+// through Module.HEAPU8; newer Emscripten only exposes these when asked
+FLAGS += ' -s FORCE_FILESYSTEM=1';
+FLAGS += ' -s EXPORTED_RUNTIME_METHODS=FS,HEAPU8 ';
+
+var WASM_FLAGS = ' ';
 
 var PRE_FLAGS = ' --pre-js ' + path.resolve(__dirname, '../js/artoolkit.api.js') +' ';
 
-FLAGS += ' --bind ';
+FLAGS += ' -lembind ';
 
 /* DEBUG FLAGS */
 var DEBUG_FLAGS = ' -g ';
 // DEBUG_FLAGS += ' -s ASSERTIONS=2 '
 DEBUG_FLAGS += ' -s ASSERTIONS=1 '
 DEBUG_FLAGS += ' --profiling '
-// DEBUG_FLAGS += ' -s EMTERPRETIFY_ADVISE=1 '
 DEBUG_FLAGS += ' -s ALLOW_MEMORY_GROWTH=1';
-DEBUG_FLAGS += '  -s DEMANGLE_SUPPORT=1 ';
 
 var INCLUDES = [
     path.resolve(__dirname, ARTOOLKIT5_ROOT + '/include'),
@@ -206,29 +237,31 @@ function clean_builds() {
     catch(e) { return console.log(e); }
 }
 
+// -r links all the ARToolKit sources into one relocatable object, reused by the three builds
 var compile_arlib = format(EMCC + ' ' + INCLUDES + ' '
     + ar_sources.join(' ')
-    + FLAGS + ' ' + DEFINES + ' -o {OUTPUT_PATH}libar.bc ',
+    + LIB_FLAGS + ' ' + DEFINES + ' -r -o {OUTPUT_PATH}libar.o ',
     OUTPUT_PATH);
 
 var compile_kpm = format(EMCC + ' ' + INCLUDES + ' '
     + kpm_sources.join(' ')
-    + FLAGS + ' ' + DEFINES + ' -o {OUTPUT_PATH}libkpm.bc ',
+    + LIB_FLAGS + ' ' + DEFINES + ' -r -o {OUTPUT_PATH}libkpm.o ',
     OUTPUT_PATH);
 
-var ALL_BC = " {OUTPUT_PATH}libar.bc ";
+var ALL_BC = " {OUTPUT_PATH}libar.o ";
 
-var compile_combine = format(EMCC + ' ' + INCLUDES + ' '
+// The final links use em++ so the C++ standard library (used by KPM and embind) is linked
+var compile_combine = format(EMPP + ' ' + INCLUDES + ' '
     + ALL_BC + MAIN_SOURCES
     + FLAGS + ' -s WASM=0' + ' '  + DEBUG_FLAGS + DEFINES + ' -o {OUTPUT_PATH}{BUILD_FILE} ',
     OUTPUT_PATH, OUTPUT_PATH, BUILD_DEBUG_FILE);
 
-var compile_combine_min = format(EMCC + ' ' + INCLUDES + ' '
+var compile_combine_min = format(EMPP + ' ' + INCLUDES + ' '
     + ALL_BC + MAIN_SOURCES
     + FLAGS + ' -s WASM=0' + ' ' + DEFINES + PRE_FLAGS + ' -o {OUTPUT_PATH}{BUILD_FILE} ',
     OUTPUT_PATH, OUTPUT_PATH, BUILD_MIN_FILE);
 
-var compile_wasm = format(EMCC + ' ' + INCLUDES + ' '
+var compile_wasm = format(EMPP + ' ' + INCLUDES + ' '
     + ALL_BC + MAIN_SOURCES
     + FLAGS + WASM_FLAGS + DEFINES + PRE_FLAGS + ' -o {OUTPUT_PATH}{BUILD_FILE} ',
     OUTPUT_PATH, OUTPUT_PATH, BUILD_WASM_FILE);
@@ -267,7 +300,16 @@ function runJob() {
     }
 
     console.log('\nRunning command: ' + cmd + '\n');
-    exec(cmd, onExec);
+
+    // cmd.exe caps a command line at ~8k characters and the source list is longer:
+    // pass the arguments to emcc in a response file instead
+    if (platform === 'win32' && cmd.length > 7000) {
+        var split = cmd.indexOf(' ');
+        var rsp = path.join(OUTPUT_PATH, 'args-' + jobs.length + '.rsp');
+        fs.writeFileSync(rsp, cmd.slice(split + 1).replace(/\\/g, '/'));
+        cmd = cmd.slice(0, split) + ' @' + rsp;
+    }
+    exec(cmd, { maxBuffer: 64 * 1024 * 1024 }, onExec);
 }
 
 var jobs = [];

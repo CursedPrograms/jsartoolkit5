@@ -1,3 +1,7 @@
 doc/reference
 node_modules
 build/*.bc
+
+# Intermediate build files from tools/makem.js
+build/*.o
+build/*.rsp

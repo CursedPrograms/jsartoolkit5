@@ -42,7 +42,12 @@ cameraParam.onload = function() {
 	ar5.debugDraw();
 
 	var assertEq = function(message, value, shouldBe) {
-		if (value !== shouldBe) {
+		// Some values (e.g. PattRatio) are stored as 32-bit floats, so 0.7848 reads back
+		// as 0.78479999...; compare numbers with a small tolerance
+		var equal = (typeof value === 'number' && typeof shouldBe === 'number')
+			? Math.abs(value - shouldBe) < 1e-6
+			: value === shouldBe;
+		if (!equal) {
 			throw(message + ' ' + value + ' is not the expected ' + shouldBe);
 		}
 	};

@@ -1,305 +1,295 @@
-# ARToolKit.js
+# ARToolKit.js (jsartoolkit5)
 
-Emscripten port of [ARToolKit](https://github.com/artoolkitx/artoolkit5) to JavaScript.
+[ARToolKit5](https://github.com/artoolkitx/artoolkit5) compiled to JavaScript and WebAssembly with
+[Emscripten](https://emscripten.org/): marker-based and image-based (NFT) augmented reality in the browser.
 
-## MArkers Types
+This is a maintained fork of [artoolkitx/jsartoolkit5](https://github.com/artoolkitx/jsartoolkit5), updated to
+build with current Emscripten and to work in current browsers. See [Changes in this fork](#changes-in-this-fork).
 
-JSARToolKit5 support these types of markers:
-- Square pictorial markers
-- Square barcode markers
-- Multi square markers set
-- NFT (natural feature tracking) markers
+## Marker types
 
----
-**NOTE:**
+- Square pictorial markers (e.g. the Hiro marker)
+- Square barcode (matrix) markers
+- Multi-marker sets
+- NFT (Natural Feature Tracking) markers: track almost any image
 
-When writing JavaScript and making changes be aware that the emscripten uglifier does not support the ES6 syntax.
+## Project structure
 
----
+| Folder | Contents |
+|---|---|
+| `build/` | The compiled library: `artoolkit.min.js` (optimized, JS API included), `artoolkit.debug.js` (debug symbols, no API), `artoolkit_wasm.js` + `artoolkit_wasm.wasm` (WebAssembly, JS API included) |
+| `js/` | The JavaScript API (`artoolkit.api.js`), the Three.js helper (`artoolkit.three.js`), a worker script and TypeScript typings |
+| `emscripten/` | The C++ binding between ARToolKit and JavaScript, plus the ARToolKit5 sources as a git submodule (`emscripten/artoolkit5`) |
+| `examples/` | Demos for the raw API, Three.js, Babylon.js, WebAssembly and NFT with web workers |
+| `tests/` | QUnit tests for the JS and WebAssembly builds |
+| `tools/` | The build script (`makem.js`) |
 
-## Project Structure
+## Which build to use
 
-- `build/` (compiled debug and minified versions of ARToolKit.js)
-- `doc/` (documentation, coming...)
-- `emscripten/` (source code for ARToolKit.js)
-- `examples/` (demos and examples using ARToolKit.js)
-- `js/` (compiled versions of ARToolKit.js with Three.js helper api)
-- `tools/` (build scripts for building ARToolKit.js)
+**Pure JavaScript**, with the JS API included:
 
-## WebAssembly
-
-JSARToolKit5 supports WebAssembly. The libary builds two WebAssembly artifacts during the build process. These are ```build/artoolkit_wasm.js``` and ```build/artoolkit_wasm.wasm```. To use those, include the artoolkit_wasm.js into your html page and define ```var artoolkit_wasm_url = '<<PATH TO>>/artoolkit_wasm.wasm';``` before loading the artoolkit_wasm.js file, like this:
-
-```js
-<script type='text/javascript'>
-      var artoolkit_wasm_url = '../build/artoolkit_wasm.wasm';
-</script>
-<script src="../build/artoolkit_wasm.js"></script>
+```html
+<script src="build/artoolkit.min.js"></script>
 ```
-As loading the WebAssembly artifact is done asynchronously, there is a callback that is called when everything is ready.
+
+**WebAssembly** (smaller and faster). Set the `.wasm` location first; the library loads asynchronously and fires
+`artoolkit-loaded` when it is ready:
+
+```html
+<script>
+  var artoolkit_wasm_url = 'build/artoolkit_wasm.wasm';
+</script>
+<script src="build/artoolkit_wasm.js"></script>
+<script>
+  window.addEventListener('artoolkit-loaded', function () {
+    // use ARController, ARCameraParam... here
+  });
+</script>
+```
+
+**Debug build.** It does not include the JS API, so load that separately:
+
+```html
+<script async src="build/artoolkit.debug.js"></script>
+<script src="js/artoolkit.api.js"></script>
+```
+
+**Three.js helper.** Load Three.js and `js/artoolkit.three.js` after the library. It adds
+`ARController.getUserMediaThreeScene()`, which sets up the camera, an `ARController` and a Three.js scene in one call:
+
+```html
+<script src="build/artoolkit.min.js"></script>
+<script src="examples/js/third_party/three.js/three.min.js"></script>
+<script src="js/artoolkit.three.js"></script>
+```
+
+## Usage
+
+The basic steps:
+
+1. Load the camera calibration with `ARCameraParam`
+2. Create an `ARController` for your image, video or canvas
+3. Choose the pattern detection mode (pattern markers are the default)
+4. Load your markers
+5. Listen for `getMarker` (or `getMultiMarker`, `getNFTMarker`) events
+6. Call `process()` for each frame
+
+### Detect a pattern marker in an image
+
+```html
+<img id="photo" src="Data/img.jpg">
+<script src="build/artoolkit.min.js"></script>
+<script>
+  var img = document.getElementById('photo');
+
+  var param = new ARCameraParam('Data/camera_para.dat', function () {
+    var ar = new ARController(img, param);   // or new ARController(width, height, param)
+
+    // Pattern markers only is the default. For barcode markers use
+    // artoolkit.AR_MATRIX_CODE_DETECTION; for both, AR_TEMPLATE_MATCHING_COLOR_AND_MATRIX
+    // (which is more error-prone).
+    ar.setPatternDetectionMode(artoolkit.AR_TEMPLATE_MATCHING_COLOR);
+
+    ar.addEventListener('getMarker', function (ev) {
+      var marker = ev.data.marker;
+      console.log('found marker', marker.idPatt, 'transform', ev.data.matrix);
+    });
+
+    ar.loadMarker('Data/patt.hiro', function (markerId) {
+      ar.trackPatternMarkerId(markerId);
+      ar.process(img);
+    });
+  }, function (err) {
+    console.error('could not load the camera parameters', err);
+  });
+</script>
+```
+
+In pattern mode the barcode fields of a marker (`idMatrix`, `dirMatrix`, `cfMatrix`) are `-1`, and in barcode mode
+the pattern fields (`idPatt`...) are `-1`.
+
+### Use the camera
+
+`ARController.getUserMediaARController()` opens the camera and creates the controller for you:
 
 ```js
-window.addEventListener('artoolkit-loaded', () => {
-    //do artoolkit stuff here
+ARController.getUserMediaARController({
+  cameraParam: 'Data/camera_para.dat',
+  maxARVideoSize: 640,
+  facingMode: 'environment',
+  onSuccess: function (ar, arCameraParam) {
+    ar.loadMarker('Data/patt.hiro', function (markerId) {
+      ar.trackPatternMarkerId(markerId);
+      (function tick() {
+        ar.process();
+        requestAnimationFrame(tick);
+      })();
+    });
+  },
+  onError: function (err) { console.error(err); }
 });
 ```
-See examples/simple_image_wasm.html for details.
+
+Browsers only allow camera access on a **secure page**: `https://` or `localhost`. Over plain `http://` (for example,
+from your phone on the local network) the library reports "Camera access needs a secure page".
+
+### NFT (image) tracking with a web worker
+
+**NFT** (Natural Feature Tracking) tracks almost any image instead of a black-bordered marker. See
+`examples/nft_improved_worker/` for complete examples. To make your own NFT markers, use the
+[NFT-Marker-Creator](https://carnaux.github.io/NFT-Marker-Creator/), after reading its
+[guide to good markers](https://github.com/Carnaux/NFT-Marker-Creator/wiki/Creating-good-markers).
+
+A shortened version of that example:
+
+```html
+<div id="container">
+  <video id="video" playsinline muted></video>
+  <canvas id="canvas_draw" style="position: absolute; left: 0; top: 0"></canvas>
+</div>
+<!-- main_worker.js starts the web worker, see examples/nft_improved_worker -->
+<script src="main_worker.js"></script>
+<script>
+  var container = document.getElementById('container');
+  var video = document.getElementById('video');
+  var canvas_draw = document.getElementById('canvas_draw');
+
+  navigator.mediaDevices.getUserMedia({
+    audio: false,
+    video: { facingMode: { ideal: 'environment' } }
+  }).then(function (stream) {
+    video.srcObject = stream;
+    video.play();
+    video.addEventListener('loadedmetadata', function () {
+      start(container, markers['pinball'], video, video.videoWidth, video.videoHeight, canvas_draw,
+        function () { statsMain.update(); },
+        function () { statsWorker.update(); });
+    });
+  });
+</script>
+```
+
+### Constants
+
+The ARToolKit constants are available on the `artoolkit` object, e.g. `artoolkit.AR_TEMPLATE_MATCHING_COLOR`.
+
+```
+AR_DEBUG_DISABLE, AR_DEBUG_ENABLE, AR_DEFAULT_DEBUG_MODE
+AR_LABELING_WHITE_REGION, AR_LABELING_BLACK_REGION, AR_DEFAULT_LABELING_MODE, AR_DEFAULT_LABELING_THRESH
+AR_IMAGE_PROC_FRAME_IMAGE, AR_IMAGE_PROC_FIELD_IMAGE, AR_DEFAULT_IMAGE_PROC_MODE
+AR_TEMPLATE_MATCHING_COLOR, AR_TEMPLATE_MATCHING_MONO, AR_MATRIX_CODE_DETECTION,
+AR_TEMPLATE_MATCHING_COLOR_AND_MATRIX, AR_TEMPLATE_MATCHING_MONO_AND_MATRIX, AR_DEFAULT_PATTERN_DETECTION_MODE
+AR_USE_TRACKING_HISTORY, AR_NOUSE_TRACKING_HISTORY, AR_USE_TRACKING_HISTORY_V2, AR_DEFAULT_MARKER_EXTRACTION_MODE
+AR_MAX_LOOP_COUNT, AR_LOOP_BREAK_THRESH
+AR_MATRIX_CODE_3x3, AR_MATRIX_CODE_3x3_HAMMING63, AR_MATRIX_CODE_3x3_PARITY65,
+AR_MATRIX_CODE_4x4, AR_MATRIX_CODE_4x4_BCH_13_9_3, AR_MATRIX_CODE_4x4_BCH_13_5_5
+AR_LABELING_THRESH_MODE_MANUAL, AR_LABELING_THRESH_MODE_AUTO_MEDIAN,
+AR_LABELING_THRESH_MODE_AUTO_OTSU, AR_LABELING_THRESH_MODE_AUTO_ADAPTIVE
+AR_MARKER_INFO_CUTOFF_PHASE_NONE, AR_MARKER_INFO_CUTOFF_PHASE_PATTERN_EXTRACTION,
+AR_MARKER_INFO_CUTOFF_PHASE_MATCH_GENERIC, AR_MARKER_INFO_CUTOFF_PHASE_MATCH_CONTRAST,
+AR_MARKER_INFO_CUTOFF_PHASE_MATCH_BARCODE_NOT_FOUND, AR_MARKER_INFO_CUTOFF_PHASE_MATCH_BARCODE_EDC_FAIL,
+AR_MARKER_INFO_CUTOFF_PHASE_MATCH_CONFIDENCE, AR_MARKER_INFO_CUTOFF_PHASE_POSE_ERROR,
+AR_MARKER_INFO_CUTOFF_PHASE_POSE_ERROR_MULTI, AR_MARKER_INFO_CUTOFF_PHASE_HEURISTIC_TROUBLESOME_MATRIX_CODES
+```
+
+## Run the examples and tests
+
+The pages load their data files with requests, so serve the repository from a local web server rather than opening
+the files directly. Any static server works:
+
+```
+npm install
+npm run test                       # http-server on port 8085
+# or, without Node: python -m http.server 8085
+```
+
+Then open:
+
+- Examples: http://localhost:8085/examples/
+- Tests (JavaScript build): http://localhost:8085/tests/index.html
+- Tests (WebAssembly build): http://localhost:8085/tests/index_wasm.html
+
+Use `localhost`, not your machine's IP address, so the camera examples are allowed to use the camera. The
+`getUserMedia` and trackable-registration tests need a webcam; without one they fail with "Requested device not
+found", and the other 11 tests still run.
 
 ## Clone the repository
 
 1. Clone this repository
-2. Clone ARToolKit5 project to get the latest source files. From within jsartoolkit5 directory do `git submodule update --init`. If you already cloned ARToolKit5 to a different directory you can:
-  - create a link in the `jsartoolkit5/emscripten/` directory that points to ARToolKit5 (`jsartoolkit5/emscripten/artoolkit5`) (Linux and macOS only)
-  - or, set the `ARTOOLKIT5_ROOT` environment variable to point to your ARToolKit5 clone
-  - or, change the `tools/makem.js` file to point to your artoolkit5 clone (line 20)
+2. Get the ARToolKit5 sources: `git submodule update --init`. If you already have ARToolKit5 elsewhere, either:
+   - link `emscripten/artoolkit5` to it (Linux and macOS), or
+   - set the `ARTOOLKIT5_ROOT` environment variable to your clone
 
-## Build the project
+## Build the library
 
-### Recommended: Build using Docker
+The prebuilt files in `build/` are ready to use, so you only need to build after changing the C++ binding or
+`js/artoolkit.api.js`. The API is compiled into `artoolkit.min.js` and the WebAssembly build, so changes to it only
+reach those builds after a rebuild.
 
-1. Install Docker (if you havn't already): [get Docker](https://www.docker.com/)
-2. Clone artoolkit5 repository on your machine: `git submodule update --init`
-3. `npm install`
-4. From inside jsartoolkit5 directory run `docker run -dit --name emscripten -v $(pwd):/src trzeci/emscripten-slim:latest bash` to download and start the container, in preparation for the build
-5. `docker exec emscripten npm run build-local` to build JS version of artoolkit5
-6. `docker stop emscripten` to stop the container after the build, if needed
-7. `docker rm emscripten` to remove the container
-8. `docker rmi trzeci/emscripten-slim:latest` to remove the Docker image, if you don't need it anymore
-9. The build artifacts will appear in `/build`. There's a build with debug symbols in `artoolkit.debug.js` file and the optimized build with bundled JS API in `artoolkit.min.js`; also, a WebAssembly build artoolkit_wasm.js and artoolkit_wasm.wasm
+The build uses current [Emscripten](https://emscripten.org/) (tested with **6.0.10**). The old fastcomp toolchain
+(1.39.x) and the `trzeci/emscripten` Docker images no longer work with `tools/makem.js`.
 
-### ⚠️ Not recommended ⚠️ : Build local with manual emscripten setup
+### With Docker
 
-To prevent issues with Emscripten setup and to not have to maintain several build environments (macOS, Windows, Linux) we only maintain the **Build using Docker**. Following are the instructions of the last know build on Linux which we verified are working. **Use at own risk.**
-** Not working on macOS!**
+1. Install [Docker](https://www.docker.com/)
+2. `git submodule update --init`
+3. From the jsartoolkit5 folder:
+   ```
+   docker run --rm -v "$(pwd)":/src -w /src emscripten/emsdk:6.0.10 node tools/makem.js
+   ```
 
-1. Install build tools
-  1. Install node.js (https://nodejs.org/en/)
-  2. Install python2 (https://www.python.org/downloads/)
-  3. Install emscripten (https://emscripten.org/docs/getting_started/downloads.html#download-and-install)
-     We used emscripten version **1.39.5-fastcomp** ~~1.38.44-fastcomp~~
+### With a local Emscripten SDK (Linux, macOS, Windows)
 
-jsartoolkit5 aim is to create a Javascript version of artoolkit5. First, you need the artoolkit5 repository on your machine:
-2. Clone ARToolKit5 project to get the latest source files. From within jsartoolkit5 directory do `git submodule update --init`. If you already cloned ARToolKit5 to a different directory you can:
-  - create a link in the `jsartoolkit5/emscripten/` directory that points to ARToolKit5 (`jsartoolkit5/emscripten/artoolkit5`)
-  - or, set the `ARTOOLKIT5_ROOT` environment variable to point to your ARToolKit5 clone
-  - or, change the `tools/makem.js` file to point to your artoolkit5 clone (line 20)
+1. Install the [Emscripten SDK](https://emscripten.org/docs/getting_started/downloads.html). It includes Node.js
+   and Python:
+   ```
+   git clone https://github.com/emscripten-core/emsdk.git
+   cd emsdk
+   ./emsdk install latest      # Windows: emsdk install latest
+   ./emsdk activate latest
+   source ./emsdk_env.sh       # Windows: emsdk_env.bat
+   ```
+2. `git submodule update --init`
+3. From the jsartoolkit5 folder: `node tools/makem.js` (or `npm run build-local`)
 
-3. Building
-  1. Make sure `EMSCRIPTEN` env variable is set (e.g. `EMSCRIPTEN=/usr/lib/emsdk_portable/emscripten/master/ node tools/makem.js`
-  3. Run `npm install`
-  4. Run `npm run build-local`
+During development, `npm run watch` rebuilds whenever `./js/` changes.
 
-During development, you can run ```npm run watch```, it will rebuild the library everytime you change ```./js/``` directory.
+Build notes:
+- The ARToolKit5 sources predate current compilers, so the build patches two things in the submodule: it creates
+  `include/AR/config.h` from `config.h.in`, and replaces the `isnan`/`isinf` macros in
+  `lib/SRC/KPM/FreakMatcher/framework/error.h`, which clash with the C++ standard library. The submodule therefore
+  shows as modified after a build; this is expected.
+- On Windows, long compiler command lines are passed to emcc through response files (`build/*.rsp`, git-ignored).
 
-4. The built ASM.js files are in `/build`. There's a build with debug symbols in `artoolkit.debug.js` and the optimized build with bundled JS API in `artoolkit.min.js`.
-
-## ARToolKit JS API
-
-```js
-<script src="../build/artoolkit.min.js">
-// include optimized ASM.js build and JS API
-</script>
-```
-
-## ARToolKit JS debug build
-
-```js
-<script async src="../build/artoolkit.debug.js">
-// - include debug build
-</script>
-<script src="../js/artoolkit.api.js">
-// - include JS API
-</script>
-```
-
-## ARToolKit Three.js helper API
-
-```js
-<script src="../build/artoolkit.min.js">
-// - include optimized ASM.js build and JS API
-</script>
-<script src="js/third_party/three.js/three.min.js">
-// - include Three.js
-</script>
-<script src="../js/artoolkit.three.js">
-// - include Three.js helper API
-</script>
-<script>
-window.ARThreeOnLoad = function () {
-console.log("Three.js helper API loaded");
-};
-if (window.ARController && window.ARController.getUserMediaThreeScene) {
-ARThreeOnLoad();
-};
-</script>
-```
-
-## Examples
-
-See `examples/` for examples on using the raw API and the Three.js helper API.
-
-The basic operation goes like this:
-
-1. Load a `ARCameraParam` object
-2. Create a `ARController` object
-3. Set pattern detection mode
-4. Load pattern markers or multimarkers if needed
-5. Add a `'getMarker'` event listener
-6. Call `ARController.process(img)`
-
-### Basic example with an image source and a pattern marker ( hiro )
-
-```js
-<script src="../build/artoolkit.min.js"></script>
-<script>
-  var param = new ARCameraParam();
-
-  param.onload = function () {
-    var img = document.getElementById('my-image');
-    var ar = new ARController(img.width, img.height, param);
-
-    // Set pattern detection mode to detect both pattern markers and barcode markers.
-    // This is more error-prone than detecting only pattern markers (default) or only barcode markers.
-    //
-    // For barcode markers, use artoolkit.AR_MATRIX_CODE_DETECTION
-    // For pattern markers, use artoolkit.AR_TEMPLATE_MATCHING_COLOR
-    //
-    ar.setPatternDetectionMode(artoolkit.AR_TEMPLATE_MATCHING_COLOR_AND_MATRIX);
-
-    ar.addEventListener('markerNum', function (ev) {
-      console.log('got markers', markerNum);
-    });
-    ar.addEventListener('getMarker', function (ev) {
-      console.log('found marker?', ev);
-    });
-    ar.loadMarker('Data/patt.hiro', function (marker) {
-      console.log('loaded marker', marker);
-      ar.process(img);
-    });
-};
-
-  param.src = 'Data/camera_para.dat';
-</script>
-```
-
-### Basic example with a worker and a NFT marker
-
-**NFT** (**N**atural **F**eature **T**racking) is a markerless technology that let you track almost any images you want. To use this feature take a look at the **nft_improved_worker** example folder. If you want to create your custom NFT marker you can use the online tool [NFT-Marker-Creator](https://carnaux.github.io/NFT-Marker-Creator/). Before proceeding with the creation of your markers, carefully read the information on the [wiki](https://github.com/Carnaux/NFT-Marker-Creator/wiki/Creating-good-markers).
-
-In the code below a summarized example:
-
-
-```js
-<div id="container">
-    <video id="video"></video>
-    <canvas style="position: absolute; left:0; top:0" id="canvas_draw"></canvas>
-</div>
-// main worker create the web worker see in the examples/nft_improved_worker for details
-<script src="main_worker.js"></script>
-<script>
-var container = document.getElementById('container');
-var video = document.getElementById('video');
-var canvas_draw = document.getElementById('canvas_draw');
-
-if (navigator.mediaDevices && navigator.mediaDevices.getUserMedia) {
-    var hint = {};
-    if (isMobile()) {
-        hint = {
-            facingMode: {"ideal": "environment"},
-            audio: false,
-            video: {
-                width: {min: 240, max: 240},
-                height: {min: 360, max: 360},
-            },
-        };
-    }
-
-    navigator.mediaDevices.getUserMedia({video: hint}).then(function (stream) {
-        video.srcObject = stream;
-        video.play();
-        video.addEventListener("loadedmetadata", function() {
-            start(container, markers["pinball"], video, video.videoWidth, video.videoHeight, canvas_draw, function() { statsMain.update() }, function() { statsWorker.update()) };
-        });
-    });
-}
-</script>
-```
-
-## Constants
-
-*prepend all these constants with `Module.` or `artoolkit.CONSTANTS` to access them*
+## Build the API documentation
 
 ```
-- AR_DEBUG_DISABLE
-- AR_DEBUG_ENABLE
-- AR_DEFAULT_DEBUG_MODE
-- AR_LABELING_WHITE_REGION
-- AR_LABELING_BLACK_REGION
-- AR_DEFAULT_LABELING_MODE
-- AR_DEFAULT_LABELING_THRESH
-- AR_IMAGE_PROC_FRAME_IMAGE
-- AR_IMAGE_PROC_FIELD_IMAGE
-- AR_DEFAULT_IMAGE_PROC_MODE
-- AR_TEMPLATE_MATCHING_COLOR
-- AR_TEMPLATE_MATCHING_MONO
-- AR_MATRIX_CODE_DETECTION
-- AR_TEMPLATE_MATCHING_COLOR_AND_MATRIX
-- AR_TEMPLATE_MATCHING_MONO_AND_MATRIX
-- AR_DEFAULT_PATTERN_DETECTION_MODE
-- AR_USE_TRACKING_HISTORY
-- AR_NOUSE_TRACKING_HISTORY
-- AR_USE_TRACKING_HISTORY_V2
-- AR_DEFAULT_MARKER_EXTRACTION_MODE
-- AR_MAX_LOOP_COUNT
-- AR_LOOP_BREAK_THRESH
-- AR_MATRIX_CODE_3x3
-- AR_MATRIX_CODE_3x3_HAMMING63 5
-- AR_MATRIX_CODE_3x3_PARITY65 2
-- AR_MATRIX_CODE_4x4
-- AR_MATRIX_CODE_4x4_BCH_13_9_3 7
-- AR_MATRIX_CODE_4x4_BCH_13_5_5 10
-- AR_LABELING_THRESH_MODE_MANUAL
-- AR_LABELING_THRESH_MODE_AUTO_MEDIAN
-- AR_LABELING_THRESH_MODE_AUTO_OTSU
-- AR_LABELING_THRESH_MODE_AUTO_ADAPTIVE
-- AR_MARKER_INFO_CUTOFF_PHASE_NONE
-- AR_MARKER_INFO_CUTOFF_PHASE_PATTERN_EXTRACTION
-- AR_MARKER_INFO_CUTOFF_PHASE_MATCH_GENERIC
-- AR_MARKER_INFO_CUTOFF_PHASE_MATCH_CONTRAST
-- AR_MARKER_INFO_CUTOFF_PHASE_MATCH_BARCODE_NOT_FOUND
-- AR_MARKER_INFO_CUTOFF_PHASE_MATCH_BARCODE_EDC_FAIL
-- AR_MARKER_INFO_CUTOFF_PHASE_MATCH_CONFIDENCE
-- AR_MARKER_INFO_CUTOFF_PHASE_POSE_ERROR
-- AR_MARKER_INFO_CUTOFF_PHASE_POSE_ERROR_MULTI
-- AR_MARKER_INFO_CUTOFF_PHASE_HEURISTIC_TROUBLESOME_MATRIX_CODES
-```
-
-## Build the tests
-
-You can run an automated routine to make some tests, in the main jsartoolkit5 folder just run in a console the command:
-
-```
-npm run test
-```
-
-Then open the tests page:
-
-```
-http://localhost:8085/tests/index.html
-```
-
-## Build the documentation
-
-It is possible to build the api documentation, run this command in the main jsartoolkit5 folder:
-
-```
+npm install
 npm run create-doc
 ```
 
-The api documentation will be created in the **doc** folder. Navigate to the **reference** folder to view the api docs.
+The documentation is written to `doc/reference`.
 
-## Issue tracker
+## Changes in this fork
 
-If you found a bug or you have a feature request, or for any inquiries related to jsartoolkit5 development file an issue at:
+- **Builds with current Emscripten (6.x)** on Linux, macOS and Windows. Upstream needed Emscripten 1.39 (2019),
+  whose compiler backend was discontinued.
+- **Marker info fix:** in pattern-only mode the barcode fields (`idMatrix`, `dirMatrix`, `cfMatrix`) returned
+  leftover memory (e.g. `1135813393`). They are now `-1` ("invalid"), as ARToolKit documents; the same goes for
+  the pattern fields in barcode-only mode.
+- **Camera code:** removed the fallbacks for browser APIs that no longer exist (`navigator.getUserMedia`,
+  `MediaStreamTrack.getSources`, `createObjectURL(stream)`). On a page that is not secure, the error now says that
+  `https://` or `localhost` is needed instead of "not supported on your browser".
+- **Windows checkouts:** `.gitattributes` treated the binary `.dat` camera files as text, so Git corrupted them on
+  Windows and the examples could not load them.
+- **Example video:** current Chrome no longer plays Ogg Theora, so the video examples now use an MP4
+  (`Data/output_4.mp4`), with the Ogg as a fallback.
+- **Examples and tests:** `simple_rtc.html` uses `navigator.mediaDevices`; the WebAssembly tests wait for the module
+  before starting (before, they ran 0 tests); the tests no longer crash or hang when there is no camera.
 
-[github.com/artoolkitx/jsartoolkit5/issues](https://github.com/artoolkitx/jsartoolkit5/issues)
+## License and issues
+
+jsartoolkit5 and ARToolKit5 are licensed under the [LGPL v3](LICENSE.txt).
+
+Report problems with this fork at [github.com/CursedPrograms/jsartoolkit5/issues](https://github.com/CursedPrograms/jsartoolkit5/issues).
+The original project is [artoolkitx/jsartoolkit5](https://github.com/artoolkitx/jsartoolkit5).

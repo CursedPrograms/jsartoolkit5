@@ -1492,102 +1492,38 @@
         });
 
         var success = function (stream) {
-            //DEPRECATED: don't use window.URL.createObjectURL(stream) any longer it might be removed soon. Only there to support old browsers src: https://developer.mozilla.org/en-US/docs/Web/API/URL/createObjectURL
-            if (window.URL.createObjectURL) {
-                //Need to add try-catch because iOS 11 fails to createObjectURL from stream. As this is deprecated  we should remove this soon
-                try {
-                    video.srcObject = stream; // DEPRECATED: this feature is in the process to being deprecated
-                }
-                catch (ex) {
-                    // Nothing todo, the purpose of this is to remove an error from the console on iOS 11
-                }
-            }
-            video.srcObject = stream; // This should be used instead. Which has the benefit to give us access to the stream object
+            video.srcObject = stream;
             readyToPlay = true;
             video.autoplay = true;
             video.playsInline = true;
             play(); // Try playing without user input, should work on non-Android Chrome
         };
 
-        var constraints = {};
         var mediaDevicesConstraints = {};
         if (configuration.width) {
             mediaDevicesConstraints.width = configuration.width;
-            if (typeof configuration.width === 'object') {
-                if (configuration.width.max) {
-                    constraints.maxWidth = configuration.width.max;
-                }
-                if (configuration.width.min) {
-                    constraints.minWidth = configuration.width.min;
-                }
-            } else {
-                constraints.maxWidth = configuration.width;
-            }
         }
-
         if (configuration.height) {
             mediaDevicesConstraints.height = configuration.height;
-            if (typeof configuration.height === 'object') {
-                if (configuration.height.max) {
-                    constraints.maxHeight = configuration.height.max;
-                }
-                if (configuration.height.min) {
-                    constraints.minHeight = configuration.height.min;
-                }
-            } else {
-                constraints.maxHeight = configuration.height;
-            }
+        }
+        mediaDevicesConstraints.facingMode = facing;
+        if (configuration.deviceId) {
+            mediaDevicesConstraints.deviceId = configuration.deviceId;
         }
 
-        mediaDevicesConstraints.facingMode = facing;
-        mediaDevicesConstraints.deviceId = configuration.deviceId;
-
-        // @ts-ignore: Ignored because it is needed to support older browsers
-        navigator.getUserMedia = navigator.getUserMedia || navigator.webkitGetUserMedia || navigator.mozGetUserMedia || navigator.msGetUserMedia;
-        var hdConstraints = {
-            audio: false,
-            video: constraints
-        };
-
-
-        // @ts-ignore: ignored because it is needed to support older browsers
-        if (navigator.mediaDevices || window.MediaStreamTrack.getSources) {
-            if (navigator.mediaDevices) {
-                navigator.mediaDevices.getUserMedia({
-                    audio: false,
-                    video: mediaDevicesConstraints
-                }).then(success, onError);
-            } else {
-                // This function of accessing the media device is deprecated and outdated and shouldn't be used anymore.
-                // @ts-ignore: ignored because it is needed to support older browsers
-                window.MediaStreamTrack.getSources(function (sources) {
-                    var facingDir = mediaDevicesConstraints.facingMode;
-                    if (facing && facing.exact) {
-                        facingDir = facing.exact;
-                    }
-                    for (var i = 0; i < sources.length; i++) {
-                        if (sources[i].kind === 'video' && sources[i].facing === facingDir) {
-                            hdConstraints.video.mandatory.sourceId = sources[i].id;
-                            break;
-                        }
-                    }
-                    if (facing && facing.exact && !hdConstraints.video.mandatory.sourceId) {
-                        onError('Failed to get camera facing the wanted direction');
-                    } else {
-                        if (navigator.getUserMedia) {
-                            navigator.getUserMedia(hdConstraints, success, onError);
-                        } else {
-                            onError('navigator.getUserMedia is not supported on your browser');
-                        }
-                    }
-                });
-            }
+        // The legacy navigator.getUserMedia / MediaStreamTrack.getSources fallbacks were removed:
+        // every current browser has navigator.mediaDevices. It is missing only on pages that are
+        // not a secure context (plain http:// other than localhost), so say that instead of
+        // "not supported".
+        if (navigator.mediaDevices && navigator.mediaDevices.getUserMedia) {
+            navigator.mediaDevices.getUserMedia({
+                audio: false,
+                video: mediaDevicesConstraints
+            }).then(success, onError);
+        } else if (window.isSecureContext === false) {
+            onError('Camera access needs a secure page: open it over https:// or on localhost');
         } else {
-            if (navigator.getUserMedia) {
-                navigator.getUserMedia(hdConstraints, success, onError);
-            } else {
-                onError('navigator.getUserMedia is not supported on your browser');
-            }
+            onError('navigator.mediaDevices.getUserMedia is not supported on your browser');
         }
 
         return video;

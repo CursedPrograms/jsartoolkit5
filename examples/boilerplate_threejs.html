@@ -12,7 +12,8 @@
 	var video = document.createElement('video');
 	// video.style.position = 'absolute'
 	document.body.appendChild(video)
-	video.src = 'Data/output_4.ogg';
+	video.src = 'Data/output_4.mp4'; // Chrome no longer plays the old Ogg Theora version
+	video.muted = true; // muted videos may autoplay
 	video.autoplay = true;
 	video.webkitPlaysinline = true;
 	video.controls = false;

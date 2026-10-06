@@ -109,7 +109,8 @@ QUnit.test("Create ARController track image", assert => {
         arController.debugSetup();
         arController.addEventListener('getMarker', (trackableInfo) => {
             assert.ok(true, "Marker found");
-            assert.deepEqual(trackableInfo.data.marker.idMatrix,0);
+            // Pattern-only detection (the default): the barcode id is reported as invalid (-1)
+            assert.deepEqual(trackableInfo.data.marker.idMatrix, -1, "idMatrix is -1 in pattern mode");
         });
 
         arController.onload = (err) => {
@@ -213,12 +214,12 @@ QUnit.test("Create ARController default, CameraPara as invalid string", assert =
 /* #### ARController.getUserMedia module #### */
 QUnit.module("ARController.getUserMedia", {
     afterEach : assert => {
-        if(this.video.srcObject) {
+        if(this.video && this.video.srcObject) {
             const track = this.video.srcObject.getTracks()[0];
             track.stop();
             this.video.srcObject = null;
         }
-        this.video.src = null;
+        if(this.video) this.video.src = null;
     }
 });
 QUnit.test("getUserMedia", assert => {
@@ -439,12 +440,12 @@ QUnit.test("getUserMediaARController wrong calib-url", assert => {
 });
 QUnit.module("ARController.Test trackable registration",{
     afterEach : assert => {
-        if(this.video.srcObject) {
+        if(this.video && this.video.srcObject) {
             const track = this.video.srcObject.getTracks()[0];
             track.stop();
             this.video.srcObject = null;
         }
-        this.video.src = null;
+        if(this.video) this.video.src = null;
     }
 });
 QUnit.test("Register valid square trackable", assert => {
@@ -688,12 +689,12 @@ QUnit.module("Performance test video",{
         this.cleanUpTimeout = 500;
     },
     afterEach : assert => {
-        if(this.video.srcObject) {
+        if(this.video && this.video.srcObject) {
             const track = this.video.srcObject.getTracks()[0];
             track.stop();
             this.video.srcObject = null;
         }
-        this.video.src = null;
+        if(this.video) this.video.src = null;
     }
 });
 QUnit.test("PTV: performance test video", assert => {
@@ -736,6 +737,8 @@ QUnit.test("PTV: performance test video", assert => {
     };
 
     const error = error => {
+        // No camera: mark the end so done() can measure instead of throwing on the missing mark
+        performance.mark('cleanup');
         done();
     }
 

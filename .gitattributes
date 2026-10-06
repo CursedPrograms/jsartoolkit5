@@ -1,2 +1,4 @@
-*.dat		text
+# .dat files are ARToolKit data: camera parameters are binary and must never get
+# line-ending conversion (it corrupts them on Windows checkouts). Keep them byte-for-byte.
+*.dat		-text
 examples/Data/multi-barcode-4x3.dat      diff

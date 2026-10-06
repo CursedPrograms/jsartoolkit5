@@ -965,6 +965,16 @@ extern "C" {
 		}
 		ARMarkerInfo* markerInfo = markerIndex < 0 ? &gMarkerInfo : &((arc->arhandle)->markerInfo[markerIndex]);
 
+		// ARToolKit only fills the pattern (idPatt...) or barcode (idMatrix...) fields that the
+		// detection mode uses; the others are left as whatever was in memory. Report them as
+		// -1 ("invalid", as documented) instead of passing that garbage to JavaScript.
+		int mode = AR_TEMPLATE_MATCHING_COLOR;
+		arGetPatternDetectionMode(arc->arhandle, &mode);
+		bool usesPatt = mode != AR_MATRIX_CODE_DETECTION;
+		bool usesMatrix = mode == AR_MATRIX_CODE_DETECTION
+			|| mode == AR_TEMPLATE_MATCHING_COLOR_AND_MATRIX
+			|| mode == AR_TEMPLATE_MATCHING_MONO_AND_MATRIX;
+
 		EM_ASM_({
 			var $a = arguments;
 			var i = 12;
@@ -1013,14 +1023,14 @@ extern "C" {
 		},
 			markerInfo->area,
 			markerInfo->id,
-			markerInfo->idPatt,
-			markerInfo->idMatrix,
+			usesPatt ? markerInfo->idPatt : -1,
+			usesMatrix ? markerInfo->idMatrix : -1,
 			markerInfo->dir,
-			markerInfo->dirPatt,
-			markerInfo->dirMatrix,
+			usesPatt ? markerInfo->dirPatt : -1,
+			usesMatrix ? markerInfo->dirMatrix : -1,
 			markerInfo->cf,
-			markerInfo->cfPatt,
-			markerInfo->cfMatrix,
+			usesPatt ? markerInfo->cfPatt : -1.0,
+			usesMatrix ? markerInfo->cfMatrix : -1.0,
 
 			markerInfo->pos[0],
 			markerInfo->pos[1],

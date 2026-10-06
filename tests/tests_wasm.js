@@ -1,4 +1,8 @@
 
+// The tests are registered once the WebAssembly module has loaded, which is after the
+// page load, so QUnit must wait for them instead of auto-starting with no tests
+QUnit.config.autostart = false;
+
 window.addEventListener('artoolkit-loaded', () => {
 
     QUnit.module("ARCameraPara");
@@ -208,12 +212,12 @@ window.addEventListener('artoolkit-loaded', () => {
     /* #### ARController.getUserMedia module #### */ 
     QUnit.module("ARController.getUserMedia", {
         afterEach : assert => {
-            if(this.video.srcObject) {
+            if(this.video && this.video.srcObject) {
                 const track = this.video.srcObject.getTracks()[0];
                 track.stop();
                 this.video.srcObject = null;
             }
-            this.video.src = null;
+            if(this.video) this.video.src = null;
         }
     });
     QUnit.test("getUserMedia", assert => {
@@ -434,12 +438,12 @@ window.addEventListener('artoolkit-loaded', () => {
     });
     QUnit.module("ARController.Test trackable registration",{
         afterEach : assert => {
-            if(this.video.srcObject) {
+            if(this.video && this.video.srcObject) {
                 const track = this.video.srcObject.getTracks()[0];
                 track.stop();
                 this.video.srcObject = null;
             }
-            this.video.src = null;
+            if(this.video) this.video.src = null;
         }
     });
     QUnit.test("Register valid trackable", assert => {
@@ -685,12 +689,12 @@ window.addEventListener('artoolkit-loaded', () => {
             this.cleanUpTimeout = 500;
         },
         afterEach : assert => {
-            if(this.video.srcObject) {
+            if(this.video && this.video.srcObject) {
                 const track = this.video.srcObject.getTracks()[0];
                 track.stop();
                 this.video.srcObject = null;
             }
-            this.video.src = null;
+            if(this.video) this.video.src = null;
         }
     });
     QUnit.test("PTV: performance test video", assert => {
@@ -737,6 +741,8 @@ window.addEventListener('artoolkit-loaded', () => {
         };
 
         const error = error => {
+            // No camera: mark the end so done() can measure instead of throwing on the missing mark
+            performance.mark('cleanup');
             done();
         }
 
@@ -813,5 +819,7 @@ window.addEventListener('artoolkit-loaded', () => {
 
         const cameraPara = new ARCameraParam(cParaUrl, success, error);
     });
+
+    QUnit.start();
 });
 //TODO write test for external Video stream creation

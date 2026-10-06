@@ -20,25 +20,25 @@ video.autoplay = true;
 
 document.body.appendChild(video);
 
-navigator.getUserMedia  = navigator.getUserMedia || navigator.webkitGetUserMedia || navigator.mozGetUserMedia || navigator.msGetUserMedia;
-
 var tw = 1280 / 2;
 var th = 720 / 2;
 
-var hdConstraints = {
+// navigator.getUserMedia and the "mandatory" constraints were removed from browsers;
+// navigator.mediaDevices is the current API (it needs https:// or localhost)
+var constraints = {
 	audio: false,
 	video: {
-		mandatory: {
-			maxWidth: tw,
-			maxHeight: th
-    	}
-  	}
+		width: { max: tw },
+		height: { max: th }
+	}
 };
 
-if (navigator.getUserMedia) {
-	navigator.getUserMedia(hdConstraints, success, errorCallback);
+if (navigator.mediaDevices && navigator.mediaDevices.getUserMedia) {
+	navigator.mediaDevices.getUserMedia(constraints).then(success, errorCallback);
 } else {
-	errorCallback('');
+	errorCallback(window.isSecureContext === false
+		? 'camera access needs https:// or localhost'
+		: 'navigator.mediaDevices.getUserMedia is not supported');
 }
 
 function errorCallback(e) {
